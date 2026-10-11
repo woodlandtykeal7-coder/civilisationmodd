@@ -1,0 +1,2 @@
+package com.tyes.civilisation.economy.logistics;
+public enum DeliveryState { REQUESTED, RESERVED, ASSIGNED, TRAVELLING_TO_SOURCE, LOADING, TRAVELLING_TO_DESTINATION, UNLOADING, BLOCKED, COMPLETE, CANCELLED }

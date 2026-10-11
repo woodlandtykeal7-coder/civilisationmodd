@@ -1,0 +1,65 @@
+### Gradle ###
+.gradle/
+/build/
+/build */
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/**/out/
+
+.run/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.eclipse/
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/**/bin/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+**/.DS_Store
+
+### Minecraft Modding ###
+/run/
+!**/src/**/run/
+**/src/generated/**/.cache/
+repo/
+!**/src/**/repo/
+/work/
+/outputs/
+/logs/
+
+### Local credentials and machine-specific configuration ###
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+credentials*.json
+secrets*.json
+local.properties
+
+### Temporary files ###
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~

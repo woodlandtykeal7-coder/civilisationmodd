@@ -1,0 +1,2 @@
+package com.tyes.civilisation.economy.production;
+public enum ProductionState { PLANNED, WAITING_FOR_INPUT, WAITING_FOR_DELIVERY, WAITING_FOR_WORKER, WAITING_FOR_WORKSTATION, READY, IN_PROGRESS, BLOCKED, COMPLETE, CANCELLED }
