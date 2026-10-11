@@ -14,6 +14,7 @@ import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
@@ -28,6 +29,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.server.level.ServerPlayer;
 import com.tyes.civilisation.network.DashboardNetwork;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 import com.tyes.civilisation.citizen.identity.CitizenAppearanceProfile;
 import com.tyes.civilisation.citizen.identity.CitizenAppearanceService;
 
@@ -123,9 +125,27 @@ public final class CivilianEntity extends PathfinderMob {
         return hurt;
     }
 
+    /**
+     * Sleeping citizens use vanilla bed pose/position, but must not be displaced by
+     * collision pushes from players or other citizens while resting.
+     */
+    @Override
+    public boolean isPushable() {
+        return SleepCollisionPolicy.canReceivePush(isSleeping()) && super.isPushable();
+    }
+
+    @Override
+    public void push(Entity other) {
+        if (SleepCollisionPolicy.canReceivePush(isSleeping())) super.push(other);
+    }
+
     @Override
     public void tick() {
         super.tick();
+        if (!level().isClientSide && isSleeping()) {
+            getNavigation().stop();
+            setDeltaMovement(Vec3.ZERO);
+        }
         if (level() instanceof ServerLevel serverLevel && citizenId != null && !isDeadOrDying()) {
             if (civilisationBrain == null) {
                 CitizenSavedData data = CitizenSavedData.get(serverLevel.getServer());
