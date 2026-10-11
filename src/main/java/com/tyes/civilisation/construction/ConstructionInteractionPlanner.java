@@ -13,6 +13,17 @@ public final class ConstructionInteractionPlanner {
     private ConstructionInteractionPlanner() {}
 
     /**
+     * Rank a complete, vanilla-confirmed path before any clipped/partial path.
+     * Within the same reachability class, the lower path/interaction score wins.
+     * This only prioritises existing physical routes; it never invents access.
+     */
+    public static int compareCandidatePaths(boolean firstComplete, double firstScore,
+                                            boolean secondComplete, double secondScore) {
+        int reachability = Boolean.compare(secondComplete, firstComplete);
+        return reachability != 0 ? reachability : Double.compare(firstScore, secondScore);
+    }
+
+    /**
      * Includes same-column interior floor positions, cardinal/diagonal positions,
      * and nearby completed surfaces. World collision and path reachability are
      * deliberately evaluated by the server-side task after this bounded pass.

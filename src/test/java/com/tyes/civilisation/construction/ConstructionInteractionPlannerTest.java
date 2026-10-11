@@ -16,6 +16,17 @@ class ConstructionInteractionPlannerTest {
         assertTrue(candidates.contains(new BlockPos(10, 73, 9)));
     }
 
+    @Test void reachableRoofStanceWinsOverShorterPartialPath() {
+        assertTrue(ConstructionInteractionPlanner.compareCandidatePaths(true, 120.0, false, -30.0) < 0);
+        assertTrue(ConstructionInteractionPlanner.compareCandidatePaths(false, -30.0, true, 120.0) > 0);
+    }
+
+    @Test void equallyReachablePositionsPreferLowerCost() {
+        assertTrue(ConstructionInteractionPlanner.compareCandidatePaths(true, 20.0, true, 35.0) < 0);
+        assertTrue(ConstructionInteractionPlanner.compareCandidatePaths(false, 20.0, false, 35.0) < 0);
+        assertEquals(0, ConstructionInteractionPlanner.compareCandidatePaths(true, 20.0, true, 20.0));
+    }
+
     @Test void failedCandidatesAreNotImmediatelyReusedAndAlternationIsDetected() {
         var memory = new ConstructionInteractionPlanner.FailureMemory();
         BlockPos a = new BlockPos(1, 2, 3), b = new BlockPos(2, 2, 3);

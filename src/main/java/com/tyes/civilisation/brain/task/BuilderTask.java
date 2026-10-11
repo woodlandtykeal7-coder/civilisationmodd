@@ -19,7 +19,6 @@ import com.tyes.civilisation.entity.CitizenVisualState;
 import com.tyes.civilisation.server.CivilisationServices;
 import com.tyes.civilisation.society.CareerLevel;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
@@ -42,6 +41,7 @@ public final class BuilderTask implements CitizenTask {
     private static final int PLACEMENT_COOLDOWN_TICKS = 10;
     private static final double MAX_REACH_SQR = 20.25D;
     private static final int MAX_SITE_REPLANS = 8;
+    private static final int MAX_SITE_MOVE_ATTEMPTS = 4;
 
     private enum Phase { TO_STOCKPILE, TO_SITE, WORKING, COOLDOWN }
 
@@ -403,10 +403,20 @@ public final class BuilderTask implements CitizenTask {
             if (support.is(Blocks.SCAFFOLDING)) score -= 2.0D;
             candidates.add(new SiteCandidate(feet.immutable(), path, score, completePath));
         }
-        SiteCandidate selected = candidates.stream().min(Comparator.comparingDouble(SiteCandidate::score)).orElse(null);
-        if (selected != null && brain.entity().getNavigation().moveTo(selected.path(), 1.0D)) {
-            beginCandidate(brain, selected.position(), selected.completePath());
-            return true;
+        // A path ending closer is only a fallback. Never prefer it over a route
+        // that vanilla navigation actually confirms can reach a valid stance.
+        candidates.sort((a, b) -> ConstructionInteractionPlanner.compareCandidatePaths(
+                a.completePath(), a.score(), b.completePath(), b.score()));
+        // A rejected moveTo must not discard the rest of the reachable options.
+        // Bound starts per replan to avoid expensive path churn on busy servers.
+        int moveAttempts = 0;
+        for (SiteCandidate candidate : candidates) {
+            if (moveAttempts++ >= MAX_SITE_MOVE_ATTEMPTS) break;
+            if (brain.entity().getNavigation().moveTo(candidate.path(), 1.0D)) {
+                beginCandidate(brain, candidate.position(), candidate.completePath());
+                return true;
+            }
+            failedPositions.failed(candidate.position());
         }
 
         BlockPos access = service(brain).accessTarget(project, index).pos();
