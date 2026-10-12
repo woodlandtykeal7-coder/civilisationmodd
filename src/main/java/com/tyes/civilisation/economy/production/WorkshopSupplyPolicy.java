@@ -31,4 +31,14 @@ public final class WorkshopSupplyPolicy {
                 && delivery.state() != DeliveryState.COMPLETE
                 && delivery.state() != DeliveryState.CANCELLED;
     }
+
+    /**
+     * A now-oversized or orphaned reservation may be retired only before pickup.
+     * Existing citizen cargo always wins over the size of the next craft batch.
+     */
+    public static boolean shouldRetire(DeliveryRequest delivery, boolean reservationExists,
+                                       int incoming, int stillNeeded) {
+        return canCancelUnloaded(delivery)
+                && (!reservationExists || delivery.state() == DeliveryState.BLOCKED || incoming > stillNeeded);
+    }
 }

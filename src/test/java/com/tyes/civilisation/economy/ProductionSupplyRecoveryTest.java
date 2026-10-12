@@ -61,9 +61,16 @@ class ProductionSupplyRecoveryTest {
         assertFalse(WorkshopSupplyPolicy.matchesInput(delivery, request, input, item("minecraft:oak_planks")));
         assertTrue(WorkshopSupplyPolicy.canCancelUnloaded(delivery));
         assertEquals(17, WorkshopSupplyPolicy.incoming(delivery));
+        // The migrated order now needs only one log, so the old 17-log
+        // reservation must be released before pickup, never duplicated.
+        assertTrue(WorkshopSupplyPolicy.shouldRetire(delivery, true, 17, 1));
+        assertFalse(WorkshopSupplyPolicy.shouldRetire(delivery, true, 1, 1));
+        // Expired reservations may not count as incoming stock.
+        assertTrue(WorkshopSupplyPolicy.shouldRetire(delivery, false, 1, 1));
         delivery.assign(UUID.randomUUID()); delivery.loaded(2);
         assertEquals(2, WorkshopSupplyPolicy.incoming(delivery));
         assertFalse(WorkshopSupplyPolicy.canCancelUnloaded(delivery));
+        assertFalse(WorkshopSupplyPolicy.shouldRetire(delivery, false, 2, 1));
         assertEquals(2, DeliveryRequest.load(delivery.save()).cargoQuantity());
     }
 

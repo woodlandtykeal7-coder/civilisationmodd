@@ -332,9 +332,8 @@ public final class SettlementEconomyService {
                     .filter(d -> WorkshopSupplyPolicy.matchesInput(d, request, input.id(), need.getKey())).toList();
             int incoming = matching.stream().mapToInt(WorkshopSupplyPolicy::incoming).sum();
             for (DeliveryRequest delivery : matching) {
-                if (!WorkshopSupplyPolicy.canCancelUnloaded(delivery)) continue;
-                boolean lostReservation = state.reservation(delivery.reservationId()).isEmpty();
-                if (lostReservation || delivery.state() == DeliveryState.BLOCKED || incoming > outstanding) {
+                boolean reservationExists = state.reservation(delivery.reservationId()).isPresent();
+                if (WorkshopSupplyPolicy.shouldRetire(delivery, reservationExists, incoming, outstanding)) {
                     incoming -= WorkshopSupplyPolicy.incoming(delivery);
                     reservations.release(state.settlementId(), delivery.reservationId());
                     delivery.cancel();
