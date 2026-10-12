@@ -20,7 +20,12 @@ class ConstructionInteractionPlannerTest {
     @Test void roofTargetOffersRealisticInsetAimPoints() {
         BlockPos target = new BlockPos(10, 74, -4);
         var aims = ConstructionInteractionPlanner.aimPoints(target);
-        assertEquals(8, aims.size());
+        assertEquals(10, aims.size());
+        // All four inside-facing roof-corner combinations must be considered.
+        assertTrue(aims.contains(new Vec3(10.08D, 74.92D, -3.92D)));
+        assertTrue(aims.contains(new Vec3(10.08D, 74.92D, -3.08D)));
+        assertTrue(aims.contains(new Vec3(10.92D, 74.92D, -3.92D)));
+        assertTrue(aims.contains(new Vec3(10.92D, 74.92D, -3.08D)));
         assertTrue(aims.contains(new Vec3(10.5D, 74.5D, -3.5D)));
         assertTrue(aims.stream().anyMatch(p -> p.y > 74.9D));
         assertTrue(aims.stream().allMatch(p -> p.x > 10 && p.x < 11

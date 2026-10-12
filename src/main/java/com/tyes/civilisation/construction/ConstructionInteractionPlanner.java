@@ -44,6 +44,8 @@ public final class ConstructionInteractionPlanner {
                 new Vec3(x + 0.5D, y + 0.75D, z + 0.08D),
                 new Vec3(x + 0.5D, y + 0.75D, z + 0.92D),
                 new Vec3(x + 0.08D, y + 0.92D, z + 0.08D),
+                new Vec3(x + 0.08D, y + 0.92D, z + 0.92D),
+                new Vec3(x + 0.92D, y + 0.92D, z + 0.08D),
                 new Vec3(x + 0.92D, y + 0.92D, z + 0.92D));
     }
 
