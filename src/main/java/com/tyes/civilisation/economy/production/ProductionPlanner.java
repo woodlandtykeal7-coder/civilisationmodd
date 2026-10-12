@@ -34,6 +34,25 @@ public final class ProductionPlanner {
 
     public void plan(ProductionRequest request) { plan(request, 0, new HashSet<>()); }
 
+    /**
+     * Older saves may contain a multi-batch crafting request stuck waiting for
+     * all ingredients. Shrink its next batch only while idle; never disrupt a
+     * worker who has already claimed the production request.
+     */
+    public boolean replanOversizedCraftBatch(ProductionRequest request) {
+        if (request.method() != ProductionMethod.CRAFT || request.claimedBy().isPresent()
+                || (request.state() != ProductionState.WAITING_FOR_DELIVERY
+                    && request.state() != ProductionState.READY)) return false;
+        var recipeId = request.recipeId().orElse(null);
+        if (recipeId == null) return false;
+        RecipeHolder<?> recipe = server.getRecipeManager().byKey(recipeId).orElse(null);
+        if (recipe == null) return false;
+        if (!ProductionBatching.hasOversizedCraftInputs(request, ingredientNeeds(request.settlementId(), recipe, 1)))
+            return false;
+        plan(request);
+        return true;
+    }
+
     private void plan(ProductionRequest request, int depth, Set<ItemKey> visiting) {
         if (request.state() == ProductionState.COMPLETE || request.state() == ProductionState.CANCELLED) return;
         if (depth > MAX_DEPTH || !visiting.add(request.output())) { request.block(ProductionBlocker.DEPENDENCY_CYCLE); data.setDirty(); return; }
@@ -56,7 +75,7 @@ public final class ProductionPlanner {
         WorkshopType requiredWorkshop = method.usesFurnace() ? WorkshopType.SMELTING : WorkshopType.GENERAL_CRAFTING;
         if (state.workshops().stream().noneMatch(w -> w.type() == requiredWorkshop)) { request.block(ProductionBlocker.MISSING_WORKSTATION); data.setDirty(); return; }
         ItemStack recipeOutput = selected.value().getResultItem(server.registryAccess());
-        int batches = Math.max(1, (request.remainingQuantity() + recipeOutput.getCount() - 1) / recipeOutput.getCount());
+        int batches = ProductionBatching.batchesForNextStep(method, request.remainingQuantity(), recipeOutput.getCount());
         Map<ItemKey, Integer> needs = ingredientNeeds(request.settlementId(), selected, batches);
         if (method == ProductionMethod.SMELT || method == ProductionMethod.SMOKE || method == ProductionMethod.BLAST) {
             ItemKey fuel = selectFuel(request.settlementId());

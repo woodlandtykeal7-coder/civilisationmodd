@@ -19,7 +19,6 @@ import com.tyes.civilisation.entity.CitizenVisualState;
 import com.tyes.civilisation.server.CivilisationServices;
 import com.tyes.civilisation.society.CareerLevel;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
@@ -42,6 +41,7 @@ public final class BuilderTask implements CitizenTask {
     private static final int PLACEMENT_COOLDOWN_TICKS = 10;
     private static final double MAX_REACH_SQR = 20.25D;
     private static final int MAX_SITE_REPLANS = 8;
+    private static final int MAX_SITE_MOVE_ATTEMPTS = 4;
 
     private enum Phase { TO_STOCKPILE, TO_SITE, WORKING, COOLDOWN }
 
@@ -234,11 +234,10 @@ public final class BuilderTask implements CitizenTask {
     }
 
     private boolean withinReachAndVisible(CitizenBrain brain, ConstructionProject project, BlockPos target) {
-        Vec3 centre = Vec3.atCenterOf(target);
-        if (brain.entity().getEyePosition().distanceToSqr(centre) > MAX_REACH_SQR) return false;
-        BlockHitResult hit = brain.level().clip(new ClipContext(brain.entity().getEyePosition(), centre,
-                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, brain.entity()));
-        return validPlacementHit(brain, project, hit, target);
+        // Use exactly the same reach/sight test for candidate selection and placement.
+        // A roof corner's centre may be hidden by the upper wall, while its exposed
+        // top/edge is physically visible and within the citizen's reach.
+        return visibleFrom(brain, project, brain.entity().getEyePosition(), target);
     }
 
     private TaskResult advance(CitizenBrain brain, ConstructionProject project) {
@@ -343,9 +342,11 @@ public final class BuilderTask implements CitizenTask {
      */
     private boolean moveToSite(CitizenBrain brain, ConstructionProject project) {
         BlockPos placement = target(project).pos();
-        int lowestFeetY = project.anchor().pos().getY();
-        // Include the level above a completed surface. This permits a path onto
-        // existing roof/access blocks instead of only searching beside/below them.
+        // The outer terrain can be below the anchor on a hillside. Restricting
+        // stance feet to the anchor height incorrectly rejects viable ground paths.
+        int lowestFeetY = Math.max(brain.level().getMinBuildHeight(),
+                project.anchor().pos().getY() - 2);
+        // Include the level above completed roofs and legitimate access surfaces.
         int highestFeetY = Math.max(lowestFeetY, placement.getY() + 1);
         List<SiteCandidate> candidates = new ArrayList<>();
         int collisionRejected = 0;
@@ -367,7 +368,7 @@ public final class BuilderTask implements CitizenTask {
             Vec3 predictedEye = new Vec3(feet.getX() + 0.5D,
                     feet.getY() + brain.entity().getEyeHeight(), feet.getZ() + 0.5D);
             double reach = predictedEye.distanceToSqr(Vec3.atCenterOf(placement));
-            if (reach > MAX_REACH_SQR || !visibleFrom(brain, project, predictedEye, placement)) {
+            if (!visibleFrom(brain, project, predictedEye, placement)) {
                 geometryRejected++;
                 continue;
             }
@@ -403,10 +404,20 @@ public final class BuilderTask implements CitizenTask {
             if (support.is(Blocks.SCAFFOLDING)) score -= 2.0D;
             candidates.add(new SiteCandidate(feet.immutable(), path, score, completePath));
         }
-        SiteCandidate selected = candidates.stream().min(Comparator.comparingDouble(SiteCandidate::score)).orElse(null);
-        if (selected != null && brain.entity().getNavigation().moveTo(selected.path(), 1.0D)) {
-            beginCandidate(brain, selected.position(), selected.completePath());
-            return true;
+        // A path ending closer is only a fallback. Never prefer it over a route
+        // that vanilla navigation actually confirms can reach a valid stance.
+        candidates.sort((a, b) -> ConstructionInteractionPlanner.compareCandidatePaths(
+                a.completePath(), a.score(), b.completePath(), b.score()));
+        // A rejected moveTo must not discard the rest of the reachable options.
+        // Bound starts per replan to avoid expensive path churn on busy servers.
+        int moveAttempts = 0;
+        for (SiteCandidate candidate : candidates) {
+            if (moveAttempts++ >= MAX_SITE_MOVE_ATTEMPTS) break;
+            if (brain.entity().getNavigation().moveTo(candidate.path(), 1.0D)) {
+                beginCandidate(brain, candidate.position(), candidate.completePath());
+                return true;
+            }
+            failedPositions.failed(candidate.position());
         }
 
         BlockPos access = service(brain).accessTarget(project, index).pos();
@@ -463,9 +474,13 @@ public final class BuilderTask implements CitizenTask {
     private record SiteCandidate(BlockPos position, Path path, double score, boolean completePath) {}
 
     private boolean visibleFrom(CitizenBrain brain, ConstructionProject project, Vec3 eye, BlockPos target) {
-        BlockHitResult hit = brain.level().clip(new ClipContext(eye, Vec3.atCenterOf(target),
-                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, brain.entity()));
-        return validPlacementHit(brain, project, hit, target);
+        for (Vec3 aim : ConstructionInteractionPlanner.aimPoints(target)) {
+            if (eye.distanceToSqr(aim) > MAX_REACH_SQR) continue;
+            BlockHitResult hit = brain.level().clip(new ClipContext(eye, aim,
+                    ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, brain.entity()));
+            if (validPlacementHit(brain, project, hit, target)) return true;
+        }
+        return false;
     }
 
     private boolean validPlacementHit(CitizenBrain brain, ConstructionProject project,

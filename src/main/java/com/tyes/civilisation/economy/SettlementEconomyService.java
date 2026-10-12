@@ -267,6 +267,9 @@ public final class SettlementEconomyService {
                 }
                 request.setState(ProductionState.PLANNED);
             }
+            // Upgrade legacy saves that still expect all 17+ logs before a single plank craft.
+            // Only idle crafting orders are touched; active work and cargo are preserved.
+            planner.replanOversizedCraftBatch(request);
             if (request.state() == ProductionState.PLANNED || request.state() == ProductionState.WAITING_FOR_INPUT
                     || request.state() == ProductionState.BLOCKED && request.blocker() != ProductionBlocker.STORAGE_FULL) {
                 planner.plan(request);
@@ -321,19 +324,33 @@ public final class SettlementEconomyService {
         boolean complete = true;
         for (Map.Entry<ItemKey, Integer> need : request.needs().entrySet()) {
             int present = index.observed(state.settlementId(), input.id(), need.getKey());
-            int incoming = state.deliveryRequests().stream().filter(d -> d.ownerId().equals(request.requestId())
-                    && d.item().itemId().equals(need.getKey().itemId()) && d.state() != DeliveryState.COMPLETE
-                    && d.state() != DeliveryState.CANCELLED).mapToInt(DeliveryRequest::quantity).sum();
-            if (present >= need.getValue()) continue;
+            int outstanding = Math.max(0, need.getValue() - present);
+            // Count only deliveries headed to THIS workshop input for THIS ingredient.
+            // Retire unloaded expired, blocked, or now-oversized requests left by old saves.
+            // Never cancel physical cargo that is already in a citizen's inventory.
+            List<DeliveryRequest> matching = state.deliveryRequests().stream()
+                    .filter(d -> WorkshopSupplyPolicy.matchesInput(d, request, input.id(), need.getKey())).toList();
+            int incoming = matching.stream().mapToInt(WorkshopSupplyPolicy::incoming).sum();
+            for (DeliveryRequest delivery : matching) {
+                boolean reservationExists = state.reservation(delivery.reservationId()).isPresent();
+                if (WorkshopSupplyPolicy.shouldRetire(delivery, reservationExists, incoming, outstanding)) {
+                    incoming -= WorkshopSupplyPolicy.incoming(delivery);
+                    reservations.release(state.settlementId(), delivery.reservationId());
+                    delivery.cancel();
+                    data.setDirty();
+                }
+            }
+            if (outstanding == 0) continue;
             complete = false;
-            int deficit = Math.max(0, need.getValue() - present - incoming);
+            int deficit = Math.max(0, outstanding - incoming);
             if (deficit == 0) continue;
             List<ResourceReservation> made = reservations.reservePartial(state.settlementId(), request.requestId(),
                     need.getKey(), deficit, ReservationPurpose.WORKSHOP_INPUT, now, RESERVATION_TTL);
             for (ResourceReservation reservation : made) deliveries.create(state.settlementId(), reservation.source(),
                     input.id(), need.getKey(), reservation.quantity(), deliveryPriority(request.priority()),
                     DeliveryPurpose.WORKSHOP_INPUT, request.requestId(), reservation.reservationId());
-            if (made.stream().mapToInt(ResourceReservation::quantity).sum() < deficit) request.block(ProductionBlocker.MISSING_RAW_RESOURCE);
+            if (made.stream().mapToInt(ResourceReservation::quantity).sum() < deficit)
+                request.block(ProductionBlocker.MISSING_RAW_RESOURCE);
         }
         if (complete) request.setState(ProductionState.READY);
     }

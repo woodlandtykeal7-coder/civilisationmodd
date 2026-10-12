@@ -33,7 +33,10 @@ public final class CivilisationDashboardScreen extends Screen {
     private int selectedTab;
     private int panelX, panelY, panelW, panelH, contentX, contentY, contentW;
     private int scroll;
+    private int maxScroll;
+    private boolean compactTabs;
     private int refreshTicks;
+    private final DashboardBuildingHitIndex buildingClickTargets = new DashboardBuildingHitIndex();
     private EditBox search;
     private Button demonstrateButton;
     private ItemStack deferredItemTooltip = ItemStack.EMPTY;
@@ -56,19 +59,29 @@ public final class CivilisationDashboardScreen extends Screen {
     }
 
     @Override protected void init() {
-        panelW = Math.min(620, Math.max(330, width - 24));
-        panelH = Math.min(390, Math.max(230, height - 24));
+        // Fit the actual scaled window rather than forcing 330x230 over small GUI sizes.
+        panelW = Math.max(1, Math.min(620, width - 24));
+        panelH = Math.max(1, Math.min(390, height - 24));
         panelX = (width - panelW) / 2; panelY = (height - panelH) / 2;
+        compactTabs = DashboardViewport.compactTabs(panelW, panelH);
         int tabW = panelW < 430 ? 72 : 94;
-        contentX = panelX + tabW + 18; contentY = panelY + 60;
-        contentW = panelW - tabW - 32;
+        contentX = compactTabs ? panelX + 14 : panelX + tabW + 18;
+        contentY = panelY + (compactTabs ? 86 : 60);
+        contentW = compactTabs ? panelW - 28 : panelW - tabW - 32;
         String[] tabs = tabs();
-        int y = panelY + 55;
-        for (int i = 0; i < tabs.length; i++) {
-            final int index = i;
-            addRenderableWidget(Button.builder(Component.literal(tabs[i]), button -> {
-                selectedTab = index; scroll = 0; rebuildSearch();
-            }).bounds(panelX + 9, y + i * 25, tabW, 21).build());
+        if (compactTabs) {
+            addRenderableWidget(Button.builder(Component.literal("<"), b -> changeTab(-1))
+                    .bounds(panelX + 12, panelY + 50, 24, 20).build());
+            addRenderableWidget(Button.builder(Component.literal(">"), b -> changeTab(1))
+                    .bounds(panelX + panelW - 36, panelY + 50, 24, 20).build());
+        } else {
+            int y = panelY + 55;
+            for (int i = 0; i < tabs.length; i++) {
+                final int index = i;
+                addRenderableWidget(Button.builder(Component.literal(tabs[i]), button -> {
+                    selectedTab = index; scroll = 0; maxScroll = 0; rebuildSearch();
+                }).bounds(panelX + 9, y + i * 25, tabW, 21).build());
+            }
         }
         if (view == DashboardView.CITIZEN && snapshot.hasUUID("settlementId"))
             addRenderableWidget(Button.builder(Component.literal("Settlement"), b -> request(DashboardView.SETTLEMENT,
@@ -82,6 +95,18 @@ public final class CivilisationDashboardScreen extends Screen {
             demonstrateButton.visible = selectedTab == 4; addRenderableWidget(demonstrateButton);
         }
         rebuildSearch();
+    }
+
+    private void changeTab(int delta) {
+        selectedTab = DashboardViewport.cycleTab(selectedTab, delta, tabs().length);
+        scroll = 0;
+        maxScroll = 0;
+        rebuildSearch();
+    }
+
+    private int contentBottom() {
+        // Keep content away from the action button in the Knowledge tab.
+        return panelY + panelH - (view == DashboardView.CITIZEN && selectedTab == 4 ? 40 : 12);
     }
 
     private void rebuildSearch() {
@@ -118,6 +143,11 @@ public final class CivilisationDashboardScreen extends Screen {
                 ? "" : " — " + snapshot.getString("readable"));
         graphics.drawString(font, trim(title, panelW - 125), panelX + 14, panelY + 15, INK, false);
         graphics.drawString(font, subtitle(), panelX + 14, panelY + 29, MUTED, false);
+        if (compactTabs) {
+            String tab = tabs()[selectedTab];
+            graphics.drawString(font, tab, panelX + (panelW - font.width(tab)) / 2,
+                    panelY + 55, ACCENT, false);
+        }
         renderContent(graphics, mouseX, mouseY);
         super.render(graphics, mouseX, mouseY, partialTick);
         if (!deferredItemTooltip.isEmpty())
@@ -136,13 +166,19 @@ public final class CivilisationDashboardScreen extends Screen {
     }
 
     private void renderContent(GuiGraphics g, int mouseX, int mouseY) {
-        int bottom = panelY + panelH - 12;
+        int bottom = contentBottom();
+        // Register hit targets from exactly the same row geometry as rendering.
+        buildingClickTargets.beginFrame(contentX, contentX + contentW, contentY - 3, bottom);
         g.enableScissor(contentX - 3, contentY - 3, panelX + panelW - 10, bottom);
         int y = contentY - scroll;
         if (view == DashboardView.CITIZEN) y = renderCitizen(g, y, mouseX, mouseY);
         else if (view == DashboardView.SETTLEMENT) y = renderSettlement(g, y, mouseX, mouseY);
         else y = renderBuilding(g, y, mouseX, mouseY);
         g.disableScissor();
+        // Clamp against actual rendered content, including variable-height projects.
+        int totalHeight = Math.max(0, y + scroll - contentY);
+        maxScroll = DashboardViewport.maxScroll(totalHeight, bottom - contentY);
+        scroll = DashboardViewport.clampScroll(scroll, maxScroll);
     }
 
     private int renderCitizen(GuiGraphics g, int y, int mouseX, int mouseY) {
@@ -301,6 +337,7 @@ public final class CivilisationDashboardScreen extends Screen {
             String detail = project ? b.getInt("done") + " / " + b.getInt("total") + " blocks • "
                     + b.getString("priority") + " • " + titleCase(b.getString("state"))
                     : b.getString("condition") + " • capacity " + b.getInt("capacity");
+            if (!project && b.hasUUID("id")) buildingClickTargets.add(b.getUUID("id"), y - 2, y + 25);
             boolean hover = !project && mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y && mouseY < y + 28;
             if (hover) g.fill(contentX - 2, y - 2, contentX + contentW, y + 25, 0x33FFFFFF);
             y = row(g, y, name, detail);
@@ -344,28 +381,30 @@ public final class CivilisationDashboardScreen extends Screen {
 
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (super.mouseClicked(mouseX, mouseY, button)) return true;
-        if (button != 0 || view != DashboardView.SETTLEMENT) return false;
-        int y = contentY - scroll + (selectedTab == 1 ? 24 : selectedTab == 3 ? 13 : 0);
+        if (button != 0 || view != DashboardView.SETTLEMENT
+                || !DashboardViewport.contains(mouseX, mouseY, contentX, contentY - 3,
+                        contentW, contentBottom() - contentY + 3)) return false;
+        if (selectedTab == 3) {
+            UUID buildingId = buildingClickTargets.hit(mouseX, mouseY);
+            if (buildingId == null) return false;
+            request(DashboardView.BUILDING, buildingId);
+            return true;
+        }
+        int y = contentY - scroll + (selectedTab == 1 ? 24 : 0);
         if (selectedTab == 1) for (CompoundTag citizen : filteredCitizens()) {
             if (mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y - 2 && mouseY < y + 25) {
                 request(DashboardView.CITIZEN, citizen.getUUID("id")); return true;
-            } y += 30;
-        }
-        if (selectedTab == 3) for (Tag raw : snapshot.getList("buildings", Tag.TAG_COMPOUND)) {
-            CompoundTag building = (CompoundTag) raw;
-            if (building.getString("kind").equals("PROJECT")) {
-                y += 30 + font.split(Component.literal("Why: " + building.getString("reason")), contentW).size() * 10
-                        + building.getList("materials", Tag.TAG_COMPOUND).size() * 12; continue;
-            }
-            if (mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y - 2 && mouseY < y + 25) {
-                request(DashboardView.BUILDING, building.getUUID("id")); return true;
             } y += 30;
         }
         return false;
     }
 
     @Override public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        scroll = Math.max(0, scroll - (int)(scrollY * 18)); return true;
+        if (!DashboardViewport.contains(mouseX, mouseY, contentX, contentY - 3,
+                contentW, contentBottom() - contentY + 3))
+            return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        scroll = DashboardViewport.clampScroll(scroll - (int)(scrollY * 18), maxScroll);
+        return true;
     }
 
     @Override public boolean isPauseScreen() { return false; }
