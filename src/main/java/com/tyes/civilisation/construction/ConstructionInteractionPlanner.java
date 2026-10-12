@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 
 /** Bounded geometry and transient failed-position memory for physical block placement. */
 public final class ConstructionInteractionPlanner {
@@ -28,6 +29,24 @@ public final class ConstructionInteractionPlanner {
      * and nearby completed surfaces. World collision and path reachability are
      * deliberately evaluated by the server-side task after this bounded pass.
      */
+    /**
+     * Aim at actual exposed parts of one target block. The first ray to hit an
+     * intervening solid block still blocks placement; this is NOT x-ray placing.
+     * Inset positions avoid hitting a neighbouring block due to boundary rounding.
+     */
+    public static List<Vec3> aimPoints(BlockPos target) {
+        double x = target.getX(), y = target.getY(), z = target.getZ();
+        return List.of(
+                new Vec3(x + 0.5D, y + 0.5D, z + 0.5D),  // centre
+                new Vec3(x + 0.5D, y + 0.92D, z + 0.5D), // exposed top
+                new Vec3(x + 0.08D, y + 0.75D, z + 0.5D),
+                new Vec3(x + 0.92D, y + 0.75D, z + 0.5D),
+                new Vec3(x + 0.5D, y + 0.75D, z + 0.08D),
+                new Vec3(x + 0.5D, y + 0.75D, z + 0.92D),
+                new Vec3(x + 0.08D, y + 0.92D, z + 0.08D),
+                new Vec3(x + 0.92D, y + 0.92D, z + 0.92D));
+    }
+
     public static List<BlockPos> candidates(BlockPos target, int lowestFeetY, int highestFeetY) {
         LinkedHashSet<BlockPos> result = new LinkedHashSet<>();
         int low = Math.min(lowestFeetY, highestFeetY);
