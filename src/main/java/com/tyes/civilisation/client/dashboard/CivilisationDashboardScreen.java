@@ -34,6 +34,7 @@ public final class CivilisationDashboardScreen extends Screen {
     private int panelX, panelY, panelW, panelH, contentX, contentY, contentW;
     private int scroll;
     private int refreshTicks;
+    private final DashboardBuildingHitIndex buildingClickTargets = new DashboardBuildingHitIndex();
     private EditBox search;
     private Button demonstrateButton;
     private ItemStack deferredItemTooltip = ItemStack.EMPTY;
@@ -137,6 +138,8 @@ public final class CivilisationDashboardScreen extends Screen {
 
     private void renderContent(GuiGraphics g, int mouseX, int mouseY) {
         int bottom = panelY + panelH - 12;
+        // Register hit targets from exactly the same row geometry as rendering.
+        buildingClickTargets.beginFrame(contentX, contentX + contentW, contentY - 3, bottom);
         g.enableScissor(contentX - 3, contentY - 3, panelX + panelW - 10, bottom);
         int y = contentY - scroll;
         if (view == DashboardView.CITIZEN) y = renderCitizen(g, y, mouseX, mouseY);
@@ -301,6 +304,7 @@ public final class CivilisationDashboardScreen extends Screen {
             String detail = project ? b.getInt("done") + " / " + b.getInt("total") + " blocks • "
                     + b.getString("priority") + " • " + titleCase(b.getString("state"))
                     : b.getString("condition") + " • capacity " + b.getInt("capacity");
+            if (!project && b.hasUUID("id")) buildingClickTargets.add(b.getUUID("id"), y - 2, y + 25);
             boolean hover = !project && mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y && mouseY < y + 28;
             if (hover) g.fill(contentX - 2, y - 2, contentX + contentW, y + 25, 0x33FFFFFF);
             y = row(g, y, name, detail);
@@ -345,20 +349,16 @@ public final class CivilisationDashboardScreen extends Screen {
     @Override public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (super.mouseClicked(mouseX, mouseY, button)) return true;
         if (button != 0 || view != DashboardView.SETTLEMENT) return false;
-        int y = contentY - scroll + (selectedTab == 1 ? 24 : selectedTab == 3 ? 13 : 0);
+        if (selectedTab == 3) {
+            UUID buildingId = buildingClickTargets.hit(mouseX, mouseY);
+            if (buildingId == null) return false;
+            request(DashboardView.BUILDING, buildingId);
+            return true;
+        }
+        int y = contentY - scroll + (selectedTab == 1 ? 24 : 0);
         if (selectedTab == 1) for (CompoundTag citizen : filteredCitizens()) {
             if (mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y - 2 && mouseY < y + 25) {
                 request(DashboardView.CITIZEN, citizen.getUUID("id")); return true;
-            } y += 30;
-        }
-        if (selectedTab == 3) for (Tag raw : snapshot.getList("buildings", Tag.TAG_COMPOUND)) {
-            CompoundTag building = (CompoundTag) raw;
-            if (building.getString("kind").equals("PROJECT")) {
-                y += 30 + font.split(Component.literal("Why: " + building.getString("reason")), contentW).size() * 10
-                        + building.getList("materials", Tag.TAG_COMPOUND).size() * 12; continue;
-            }
-            if (mouseX >= contentX && mouseX < contentX + contentW && mouseY >= y - 2 && mouseY < y + 25) {
-                request(DashboardView.BUILDING, building.getUUID("id")); return true;
             } y += 30;
         }
         return false;
