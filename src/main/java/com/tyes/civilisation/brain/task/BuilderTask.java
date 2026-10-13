@@ -110,7 +110,10 @@ public final class BuilderTask implements CitizenTask {
         }
         ConstructionProject project = project(brain);
         UUID citizen = brain.record().citizenId();
-        if (project == null || phase != Phase.COOLDOWN && !project.owns(index, citizen)) return TaskResult.FAILED;
+        if (project == null || phase != Phase.COOLDOWN && !project.owns(index, citizen)) {
+            releaseLeasedStance(brain);
+            return TaskResult.FAILED;
+        }
         if (!project.anchor().isIn(brain.level()) || !brain.level().isLoaded(project.anchor().pos())) {
             project.setState(ConstructionProjectState.BLOCKED, ConstructionBlocker.CHUNK_UNLOADED);
             return TaskResult.WAITING;
@@ -255,6 +258,7 @@ public final class BuilderTask implements CitizenTask {
 
     private TaskResult advance(CitizenBrain brain, ConstructionProject project) {
         if (project.state() == ConstructionProjectState.COMPLETE) {
+            releaseLeasedStance(brain);
             brain.entity().clearVisualItem();
             return TaskResult.COMPLETE;
         }
