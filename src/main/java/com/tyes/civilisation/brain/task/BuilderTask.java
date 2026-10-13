@@ -54,6 +54,8 @@ public final class BuilderTask implements CitizenTask {
     private final ConstructionInteractionPlanner.FailureMemory failedPositions =
             new ConstructionInteractionPlanner.FailureMemory();
     private BlockPos interactionPosition;
+    // Ephemeral working-space lease: unlike project claims it never holds physical resources.
+    private BlockPos leasedStance;
     private BlockPos previousSample;
     private BlockPos twoSamplesAgo;
     private int oscillationSamples;
@@ -83,7 +85,7 @@ public final class BuilderTask implements CitizenTask {
         ConstructionProject project = project(brain);
         if (project == null || !project.owns(index, brain.record().citizenId())) return TaskStartResult.INVALID;
         phase = ownsCargoForTarget(brain, project) ? Phase.TO_SITE : Phase.TO_STOCKPILE;
-        resetInteractionPlanning();
+        resetInteractionPlanning(brain);
         showCargo(brain, project);
         last = brain.entity().position();
         boolean moving = phase == Phase.TO_STOCKPILE
@@ -95,9 +97,23 @@ public final class BuilderTask implements CitizenTask {
     @Override
     public TaskResult tick(CitizenBrain brain) {
         failedPositions.tick();
+        if (leasedStance != null && (phase == Phase.TO_SITE || phase == Phase.WORKING)) {
+            var leaseService = CivilisationServices.constructionStances(brain.level().getServer());
+            if (!leaseService.claim(projectId, brain.level().dimension().location(),
+                    leasedStance, brain.record().citizenId(), brain.level().getGameTime())) {
+                // Another live worker may have acquired a lease after this NPC suspended.
+                leasedStance = null;
+                interactionPosition = null;
+                phase = Phase.TO_SITE;
+                brain.entity().getNavigation().stop();
+            }
+        }
         ConstructionProject project = project(brain);
         UUID citizen = brain.record().citizenId();
-        if (project == null || phase != Phase.COOLDOWN && !project.owns(index, citizen)) return TaskResult.FAILED;
+        if (project == null || phase != Phase.COOLDOWN && !project.owns(index, citizen)) {
+            releaseLeasedStance(brain);
+            return TaskResult.FAILED;
+        }
         if (!project.anchor().isIn(brain.level()) || !brain.level().isLoaded(project.anchor().pos())) {
             project.setState(ConstructionProjectState.BLOCKED, ConstructionBlocker.CHUNK_UNLOADED);
             return TaskResult.WAITING;
@@ -153,7 +169,7 @@ public final class BuilderTask implements CitizenTask {
         phase = Phase.TO_SITE;
         age = 0;
         phaseTicks = 0;
-        resetInteractionPlanning();
+        resetInteractionPlanning(brain);
         showCargo(brain, project);
         moveToSite(brain, project);
         return TaskResult.RUNNING;
@@ -164,7 +180,7 @@ public final class BuilderTask implements CitizenTask {
         if (brain.record().inventory().count(needed) <= 0) {
             phase = Phase.TO_STOCKPILE;
             phaseTicks = 0;
-            resetInteractionPlanning();
+            resetInteractionPlanning(brain);
             brain.entity().clearVisualItem();
             move(brain, project.stockpile());
             return TaskResult.RUNNING;
@@ -187,7 +203,7 @@ public final class BuilderTask implements CitizenTask {
         if (!withinReachAndVisible(brain, project, target.pos())) {
             phase = Phase.TO_SITE;
             phaseTicks = 0;
-            failCurrentCandidate();
+            failCurrentCandidate(brain);
             if (++siteReplans >= MAX_SITE_REPLANS || !moveToSite(brain, project))
                 return failAccess(brain, project);
             return TaskResult.RUNNING;
@@ -242,20 +258,23 @@ public final class BuilderTask implements CitizenTask {
 
     private TaskResult advance(CitizenBrain brain, ConstructionProject project) {
         if (project.state() == ConstructionProjectState.COMPLETE) {
+            releaseLeasedStance(brain);
             brain.entity().clearVisualItem();
             return TaskResult.COMPLETE;
         }
         var next = project.claim(brain.record().citizenId(), project.heldBy(brain.record().citizenId()).keySet());
         if (next.isEmpty()) {
+            releaseLeasedStance(brain);
             brain.entity().clearVisualItem();
             return TaskResult.COMPLETE;
         }
+        releaseLeasedStance(brain);
         index = next.getAsInt();
         failedPositions.clear();
         phase = ownsCargoForTarget(brain, project) ? Phase.TO_SITE : Phase.TO_STOCKPILE;
         age = 0;
         phaseTicks = 0;
-        resetInteractionPlanning();
+        resetInteractionPlanning(brain);
         // The construction claim reconciler runs independently of the citizen's
         // normal persistence cadence. Persist the new block index immediately so
         // a valid batch continuation is never mistaken for an abandoned claim.
@@ -321,7 +340,7 @@ public final class BuilderTask implements CitizenTask {
             boolean stalled = pathEnded || noProgressChecks >= 3
                     || oscillationSamples >= 2 || failedPositions.alternating();
             if (stalled) {
-                failCurrentCandidate();
+                failCurrentCandidate(brain);
                 if (++siteReplans >= MAX_SITE_REPLANS || !moveToSite(brain, project))
                     return failAccess(brain, project);
             }
@@ -353,8 +372,13 @@ public final class BuilderTask implements CitizenTask {
         int supportRejected = 0;
         int geometryRejected = 0;
         int pathRejected = 0;
+        var stanceService = CivilisationServices.constructionStances(brain.level().getServer());
+        UUID builderId = brain.record().citizenId();
+        long now = brain.level().getGameTime();
+        var dimension = brain.level().dimension().location();
         for (BlockPos feet : ConstructionInteractionPlanner.candidates(placement, lowestFeetY, highestFeetY)) {
             if (!failedPositions.available(feet) || feet.equals(placement) || feet.above().equals(placement)) continue;
+            if (!stanceService.available(projectId, dimension, feet, builderId, now)) continue;
             if (!passable(brain, feet) || !passable(brain, feet.above())) {
                 collisionRejected++;
                 continue;
@@ -413,19 +437,28 @@ public final class BuilderTask implements CitizenTask {
         int moveAttempts = 0;
         for (SiteCandidate candidate : candidates) {
             if (moveAttempts++ >= MAX_SITE_MOVE_ATTEMPTS) break;
+            if (!stanceService.claim(projectId, dimension, candidate.position(), builderId, now)) continue;
             if (brain.entity().getNavigation().moveTo(candidate.path(), 1.0D)) {
+                changeLeasedStance(brain, candidate.position());
                 beginCandidate(brain, candidate.position(), candidate.completePath());
                 return true;
             }
+            if (!candidate.position().equals(leasedStance))
+                stanceService.release(projectId, dimension, candidate.position(), builderId);
             failedPositions.failed(candidate.position());
         }
 
         BlockPos access = service(brain).accessTarget(project, index).pos();
         if (!failedPositions.available(access)) return false;
         Path fallback = brain.entity().getNavigation().createPath(access, 0);
-        if (fallback != null && fallback.canReach() && brain.entity().getNavigation().moveTo(fallback, 1.0D)) {
-            beginCandidate(brain, access, true);
-            return true;
+        if (fallback != null && fallback.canReach()
+                && stanceService.claim(projectId, dimension, access, builderId, now)) {
+            if (brain.entity().getNavigation().moveTo(fallback, 1.0D)) {
+                changeLeasedStance(brain, access);
+                beginCandidate(brain, access, true);
+                return true;
+            }
+            if (!access.equals(leasedStance)) stanceService.release(projectId, dimension, access, builderId);
         }
         CivilisationMod.LOGGER.debug("No construction interaction path for {} placement {} at {} "
                 + "(collision={}, support={}, geometry={}, path={}, blacklisted={})",
@@ -447,20 +480,23 @@ public final class BuilderTask implements CitizenTask {
         noProgressChecks = 0;
     }
 
-    private void failCurrentCandidate() {
+    private void failCurrentCandidate(CitizenBrain brain) {
         if (interactionPosition != null) failedPositions.failed(interactionPosition);
+        releaseLeasedStance(brain);
         interactionPosition = null;
         noProgressChecks = 0;
     }
 
     private TaskResult failAccess(CitizenBrain brain, ConstructionProject project) {
+        releaseLeasedStance(brain);
         service(brain).failed(projectId, index, brain.record().citizenId());
         if (project.needsAccess())
             project.setState(ConstructionProjectState.BLOCKED, ConstructionBlocker.ACCESS_REQUIRED);
         return TaskResult.PATH_FAILED;
     }
 
-    private void resetInteractionPlanning() {
+    private void resetInteractionPlanning(CitizenBrain brain) {
+        releaseLeasedStance(brain);
         interactionPosition = null;
         previousSample = null;
         twoSamplesAgo = null;
@@ -469,6 +505,19 @@ public final class BuilderTask implements CitizenTask {
         siteReplans = 0;
         bestTargetDistance = Double.MAX_VALUE;
         currentPathComplete = false;
+    }
+
+    /** Release old square only after the new standing square has been successfully reserved. */
+    private void changeLeasedStance(CitizenBrain brain, BlockPos next) {
+        if (leasedStance != null && !leasedStance.equals(next)) releaseLeasedStance(brain);
+        leasedStance = next.immutable();
+    }
+
+    private void releaseLeasedStance(CitizenBrain brain) {
+        if (leasedStance == null) return;
+        CivilisationServices.constructionStances(brain.level().getServer()).release(
+                projectId, brain.level().dimension().location(), leasedStance, brain.record().citizenId());
+        leasedStance = null;
     }
 
     private record SiteCandidate(BlockPos position, Path path, double score, boolean completePath) {}
@@ -542,7 +591,7 @@ public final class BuilderTask implements CitizenTask {
         if (project != null) {
             phase = ownsCargoForTarget(brain, project) ? Phase.TO_SITE : Phase.TO_STOCKPILE;
             phaseTicks = 0;
-            resetInteractionPlanning();
+            resetInteractionPlanning(brain);
             showCargo(brain, project);
             if (phase == Phase.TO_SITE) moveToSite(brain, project);
             else move(brain, project.stockpile());
@@ -551,6 +600,7 @@ public final class BuilderTask implements CitizenTask {
 
     @Override
     public void cancel(CitizenBrain brain, TaskCancelReason reason) {
+        releaseLeasedStance(brain);
         brain.entity().getNavigation().stop();
         if (reason == TaskCancelReason.STUCK) service(brain).failed(projectId, index, brain.record().citizenId());
         else service(brain).release(projectId, index, brain.record().citizenId());
