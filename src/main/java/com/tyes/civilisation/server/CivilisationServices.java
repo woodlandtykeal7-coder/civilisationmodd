@@ -17,6 +17,7 @@ public final class CivilisationServices {
     private static final Map<MinecraftServer, SettlementResourceIndex> RESOURCES = new WeakHashMap<>();
     private static final Map<MinecraftServer, SettlementEconomyService> ECONOMY = new WeakHashMap<>();
     private static final Map<MinecraftServer, ConstructionService> CONSTRUCTION = new WeakHashMap<>();
+    private static final Map<MinecraftServer, com.tyes.civilisation.construction.ConstructionStanceCoordinator> CONSTRUCTION_STANCES = new WeakHashMap<>();
     private static final Map<MinecraftServer, BuildingDemandService> BUILDING_DEMAND = new WeakHashMap<>();
     private static final Map<MinecraftServer, DemographyService> DEMOGRAPHY = new WeakHashMap<>();
     private static final Map<MinecraftServer, KnowledgeService> KNOWLEDGE = new WeakHashMap<>();
@@ -40,6 +41,11 @@ public final class CivilisationServices {
         return ECONOMY.computeIfAbsent(server, key -> new SettlementEconomyService(key, resourceIndex(key)));
     }
     public static synchronized ConstructionService construction(MinecraftServer server) { return CONSTRUCTION.computeIfAbsent(server, ConstructionService::new); }
+
+    /** Runtime-only, game-tick-bounded stance leases, isolated per server. */
+    public static synchronized com.tyes.civilisation.construction.ConstructionStanceCoordinator constructionStances(MinecraftServer server) {
+        return CONSTRUCTION_STANCES.computeIfAbsent(server, ignored -> new com.tyes.civilisation.construction.ConstructionStanceCoordinator());
+    }
     public static synchronized BuildingDemandService buildingDemand(MinecraftServer server) {
         return BUILDING_DEMAND.computeIfAbsent(server, key -> new BuildingDemandService(key, construction(key)));
     }
@@ -56,6 +62,7 @@ public final class CivilisationServices {
         RESOURCES.remove(server);
         ECONOMY.remove(server);
         CONSTRUCTION.remove(server);
+        CONSTRUCTION_STANCES.remove(server);
         BUILDING_DEMAND.remove(server);
         DEMOGRAPHY.remove(server);
         KNOWLEDGE.remove(server);
