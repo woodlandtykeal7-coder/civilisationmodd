@@ -1,4 +1,5 @@
 {
   "entity.civilisation.civilian": "Civilian",
-  "item.civilisation.civilian_spawn_egg": "Civilian Spawn Egg"
+  "item.civilisation.civilian_spawn_egg": "Civilian Spawn Egg",
+  "block.civilisation.builder_hut_floor": "Builder's Hut Floor Marker"
 }
