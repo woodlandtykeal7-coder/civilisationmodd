@@ -3,6 +3,8 @@ package com.tyes.civilisation;
 import com.mojang.logging.LogUtils;
 import com.tyes.civilisation.entity.CivilianEntity;
 import com.tyes.civilisation.entity.ModEntities;
+import com.tyes.civilisation.block.ModBlocks;
+import com.tyes.civilisation.block.ModBlockEntities;
 import com.tyes.civilisation.server.CivilisationEvents;
 import com.tyes.civilisation.item.ModItems;
 import com.tyes.civilisation.network.DashboardNetwork;
@@ -20,6 +22,8 @@ public final class CivilisationMod {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public CivilisationMod(IEventBus modEventBus) {
+        ModBlocks.BLOCKS.register(modEventBus);
+        ModBlockEntities.BLOCK_ENTITY_TYPES.register(modEventBus);
         ModEntities.ENTITY_TYPES.register(modEventBus);
         ModItems.ITEMS.register(modEventBus);
         modEventBus.addListener(CivilisationMod::registerAttributes);
@@ -35,5 +39,6 @@ public final class CivilisationMod {
 
     private static void addCreativeItems(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.SPAWN_EGGS) event.accept(ModItems.CIVILIAN_SPAWN_EGG.get());
+        if (event.getTabKey() == CreativeModeTabs.BUILDING_BLOCKS) event.accept(ModItems.BUILDER_HUT_FLOOR.get());
     }
 }
