@@ -24,17 +24,20 @@ class ConstructionStanceCoordinatorTest {
         assertTrue(c.claim(project, OVERWORLD, position, b, 21));
     }
 
-    @Test void leasesAreSeparateForProjectsAndWorlds() {
+    @Test void twoProjectsCannotReserveTheSameWorldSquare() {
         var c = new ConstructionStanceCoordinator();
         UUID p = UUID.randomUUID(), q = UUID.randomUUID();
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();
         var feet = new BlockPos(0, 64, 0);
         assertTrue(c.claim(p, OVERWORLD, feet, a, 0));
-        assertTrue(c.claim(q, OVERWORLD, feet, b, 0));
-        assertTrue(c.claim(p, ResourceLocation.parse("minecraft:the_nether"), feet, b, 0));
-        assertEquals(3, c.activeLeases(5));
+        assertFalse(c.available(q, OVERWORLD, feet, b, 0));
+        assertFalse(c.claim(q, OVERWORLD, feet, b, 0));
+        assertFalse(c.claim(q, OVERWORLD, feet, a, 0)); // even the same owner cannot steal a different project
+        assertTrue(c.claim(q, ResourceLocation.parse("minecraft:the_nether"), feet, b, 0));
+        assertEquals(2, c.activeLeases(5));
         c.releaseProject(p);
         assertEquals(1, c.activeLeases(5));
+        assertTrue(c.claim(q, OVERWORLD, feet, b, 5));
     }
 
     @Test void expiryMakesAbandonedStandingSpaceAvailableAgain() {
@@ -48,6 +51,17 @@ class ConstructionStanceCoordinatorTest {
         assertEquals(1, c.activeLeases(100 + ConstructionStanceCoordinator.LEASE_TICKS));
         c.prune(100 + 2 * ConstructionStanceCoordinator.LEASE_TICKS);
         assertEquals(0, c.activeLeases(100 + 2 * ConstructionStanceCoordinator.LEASE_TICKS));
+    }
+
+    @Test void aDifferentProjectCannotReleaseAnotherProjectsLease() {
+        var c = new ConstructionStanceCoordinator();
+        UUID p = UUID.randomUUID(), q = UUID.randomUUID(), citizen = UUID.randomUUID();
+        BlockPos feet = new BlockPos(20, 75, -5);
+        assertTrue(c.claim(p, OVERWORLD, feet, citizen, 0));
+        c.release(q, OVERWORLD, feet, citizen);
+        assertFalse(c.available(q, OVERWORLD, feet, UUID.randomUUID(), 1));
+        c.release(p, OVERWORLD, feet, citizen);
+        assertTrue(c.available(q, OVERWORLD, feet, UUID.randomUUID(), 1));
     }
 
     @Test void oneBuilderMaySelectDifferentNearbySquaresWhileTheOtherWorks() {

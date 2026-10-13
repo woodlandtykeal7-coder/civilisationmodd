@@ -264,6 +264,7 @@ public final class BuilderTask implements CitizenTask {
         }
         var next = project.claim(brain.record().citizenId(), project.heldBy(brain.record().citizenId()).keySet());
         if (next.isEmpty()) {
+            releaseLeasedStance(brain);
             brain.entity().clearVisualItem();
             return TaskResult.COMPLETE;
         }

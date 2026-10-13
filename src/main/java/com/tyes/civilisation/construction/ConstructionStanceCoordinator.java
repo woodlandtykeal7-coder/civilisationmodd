@@ -8,9 +8,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * Per-MinecraftServer temporary standing-space reservations for physical construction.
- * A lease is never a world block, persisted inventory, project claim or route shortcut.
- * It only prevents multiple builders from selecting one intended working square.
+ * Per-server short-lived standing-square coordination for physical construction.
+ * A world cell is exclusive across ALL active projects, not just within one
+ * blueprint. This matters when a single guild sends builders to adjoining jobs.
+ * Leases never represent physical blocks, inventories or construction claims.
  */
 public final class ConstructionStanceCoordinator {
     public static final long LEASE_TICKS = 160L;
@@ -18,34 +19,36 @@ public final class ConstructionStanceCoordinator {
 
     public synchronized boolean available(UUID projectId, ResourceLocation dimension, BlockPos feet,
                                           UUID citizenId, long now) {
-        Lease current = leases.get(new StanceKey(projectId, dimension, feet.immutable()));
-        return current == null || current.expiresAt <= now || current.owner.equals(citizenId);
+        Lease current = leases.get(new StanceKey(dimension, feet.immutable()));
+        return current == null || current.expiresAt <= now
+                || current.projectId.equals(projectId) && current.owner.equals(citizenId);
     }
 
     public synchronized boolean claim(UUID projectId, ResourceLocation dimension, BlockPos feet,
                                       UUID citizenId, long now) {
-        StanceKey key = new StanceKey(projectId, dimension, feet.immutable());
-        Lease previous = leases.get(key);
-        if (previous != null && previous.expiresAt > now && !previous.owner.equals(citizenId)) return false;
-        leases.put(key, new Lease(citizenId, now + LEASE_TICKS));
-        // Opportunistic pruning keeps stale positions bounded on a long-running server.
+        StanceKey key = new StanceKey(dimension, feet.immutable());
+        Lease current = leases.get(key);
+        if (current != null && current.expiresAt > now
+                && (!current.projectId.equals(projectId) || !current.owner.equals(citizenId))) return false;
+        leases.put(key, new Lease(projectId, citizenId, now + LEASE_TICKS));
         if (leases.size() > 256) prune(now);
         return true;
     }
 
     public synchronized void release(UUID projectId, ResourceLocation dimension, BlockPos feet, UUID citizenId) {
-        StanceKey key = new StanceKey(projectId, dimension, feet);
-        Lease previous = leases.get(key);
-        if (previous != null && previous.owner.equals(citizenId)) leases.remove(key);
+        StanceKey key = new StanceKey(dimension, feet);
+        Lease current = leases.get(key);
+        if (current != null && current.projectId.equals(projectId) && current.owner.equals(citizenId))
+            leases.remove(key);
     }
 
     public synchronized void releaseProject(UUID projectId) {
-        leases.keySet().removeIf(key -> key.projectId.equals(projectId));
+        leases.values().removeIf(lease -> lease.projectId.equals(projectId));
     }
 
     public synchronized void prune(long now) {
-        Iterator<Map.Entry<StanceKey, Lease>> it = leases.entrySet().iterator();
-        while (it.hasNext()) if (it.next().getValue().expiresAt <= now) it.remove();
+        Iterator<Map.Entry<StanceKey, Lease>> iterator = leases.entrySet().iterator();
+        while (iterator.hasNext()) if (iterator.next().getValue().expiresAt <= now) iterator.remove();
     }
 
     public synchronized int activeLeases(long now) {
@@ -53,6 +56,6 @@ public final class ConstructionStanceCoordinator {
         return leases.size();
     }
 
-    private record StanceKey(UUID projectId, ResourceLocation dimension, BlockPos feet) {}
-    private record Lease(UUID owner, long expiresAt) {}
+    private record StanceKey(ResourceLocation dimension, BlockPos feet) {}
+    private record Lease(UUID projectId, UUID owner, long expiresAt) {}
 }
